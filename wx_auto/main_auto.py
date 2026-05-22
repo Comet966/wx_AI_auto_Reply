@@ -148,14 +148,17 @@ class WindowFinder:
         return False
 
     def capture_chat_area(self):
-        """截取聊天区域（右半边，去掉联系人列表）"""
+        """截取消息区域 - 只取上方（对方的消息区域）"""
         if not self.window:
             return None
 
+        # 只取上半部分，约40%（灰色背景是对方的，在上方）
         left = self.window["left"] + self.window["width"] // 4
-        top = self.window["top"]
+        top = self.window["top"] + int(self.window["height"] * 0.15)  # 从15%开始
         width = self.window["width"] * 3 // 4
-        height = self.window["height"]
+        height = int(self.window["height"] * 0.40)  # 取到55%处
+
+        region = {"left": left, "top": top, "width": width, "height": height}
 
         region = {"left": left, "top": top, "width": width, "height": height}
 
@@ -245,18 +248,31 @@ class WeChatBot:
         # OCR识别
         texts = self.reader.recognize(img)
 
-        # 检测新消息
-        if texts and texts != self.last_texts:
-            new_msgs = texts[-5:] if len(texts) >= 5 else texts
+        # 过滤无关内容
+        ui_keywords = ["发送", "图片", "表情", "文件", "视频", "语音", "名片", "位置"]
+        # 过滤时间戳格式 HH:MM 或 HH:MM:SS
+        import re
+        time_pattern = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
 
+        filtered = []
+        for t in texts:
+            # 排除UI关键字、时间戳、单字
+            if t in ui_keywords:
+                continue
+            if time_pattern.match(t):
+                continue
+            if len(t) < 2:
+                continue
+            filtered.append(t)
+
+        # 只取最近1条
+        latest_msg = filtered[-1] if filtered else ""
+
+        if latest_msg and latest_msg != self.last_texts:
             print(f"\n[{time.strftime('%H:%M:%S')}] === 新消息 ===")
-            for t in new_msgs:
-                print(f"  {t}")
+            print(f"  {latest_msg}")
 
-            # 生成回复
-            content = "\n".join(texts[-5:])
-            reply = self.client.chat_with_context(content)
-
+            reply = self.client.chat_with_context(latest_msg)
             print(f"[AI] {reply}")
 
             # 询问
