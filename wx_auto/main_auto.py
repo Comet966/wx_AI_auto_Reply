@@ -44,6 +44,9 @@ class Config:
         self.night_start = data["safety"].get("night_mode_start", 23)
         self.night_end = data["safety"].get("night_mode_end", 8)
 
+        # 运行模式
+        self.auto_send = data.get("mode", {}).get("auto_send", False)
+
 
 # ========== API模块 ==========
 class APIClient:
@@ -275,11 +278,15 @@ class WeChatBot:
             reply = self.client.chat_with_context(latest_msg)
             print(f"[AI] {reply}")
 
-            # 询问
-            send = input("\n发送回复? (y/n): ").strip().lower()
-            if send == "y":
+            # 根据配置决定是否自动发送
+            if self.config.auto_send:
                 self.sender.send(reply)
-                print("✓ 已发送")
+                print("✓ 已自动发送")
+            else:
+                send = input("\n发送回复? (y/n): ").strip().lower()
+                if send == "y":
+                    self.sender.send(reply)
+                    print("✓ 已发送")
 
             self.last_texts = texts
 
@@ -293,7 +300,6 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", nargs="?", choices=["run", "test"])
-    parser.add_argument("--continuous", action="store_true", help="持续监控模式（不询问，每个新消息自动回复）")
     args = parser.parse_args()
 
     # 创建机器人
@@ -301,8 +307,10 @@ def main():
     if not bot.start():
         return
 
+    if bot.config.auto_send:
+        print(">>> 自动发送模式 <<<\n")
+
     if args.mode == "test":
-        # 单次测试
         bot.run_once()
         return
 

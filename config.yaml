@@ -2,7 +2,7 @@
 
 # 硅基流动 API 配置
 api:
-  key: "sk-260840b14d4c408e923098186aa76db9"
+  key: "your-api-key"
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
   temperature: 0.7
@@ -33,9 +33,13 @@ keywords:
 
 # AI对话配置
 ai:
-  system_prompt: "你是一个热情的客服，请用简短友好的语气回复用户的问题。"
+  system_prompt: "你是一个热情的生活助手，善于回答别人的各种问题"
   context_window: 5  # 对话上下文保留条数
 
 # 微信窗口配置
 wechat:
   title_keyword: "微信"  # 窗口标题关键词
+
+# 运行模式配置
+mode:
+  auto_send: true  # true=自动发送, false=手动确认

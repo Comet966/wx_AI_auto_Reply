@@ -1,120 +1,76 @@
-"""Test script for OCR."""
-import sys
-sys.path.insert(0, ".")
-
-from PIL import Image, ImageDraw, ImageFont
+"""OCR测试脚本"""
+import win32gui
 import mss
+from PIL import Image
+from cnocr import CnOcr
 
 
-def test_screen_capture():
-    """Test screen capture."""
-    print("=== 测试屏幕截图 ===\n")
+def find_wechat():
+    """找微信窗口"""
+    windows = []
+    def callback(hwnd, extra):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title == "微信":
+                rect = win32gui.GetWindowRect(hwnd)
+                if rect[0] >= 0:
+                    windows.append({"left": rect[0], "top": rect[1], "width": rect[2]-rect[0], "height": rect[3]-rect[1]})
+        return True
+    win32gui.EnumWindows(callback, None)
+    return windows[0] if windows else None
 
-    with mss.mss() as sct:
-        # Capture full screen
-        screenshot = sct.grab(sct.monitors[1])
-        img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
 
-        # Save screenshot
-        output_path = "test_screenshot.png"
-        img.save(output_path)
-        print(f"✓ 截图已保存: {output_path}")
-        print(f"  尺寸: {img.size}")
+def capture_bottom(win):
+    """截取下方区域（对方消息）"""
+    # 上方40%区域
+    left = win["left"] + win["width"] // 4
+    top = win["top"] + int(win["height"] * 0.15)
+    width = win["width"] * 3 // 4
+    height = int(win["height"] * 0.40)
 
+    with mss.MSS() as sct:
+        img = sct.grab({"left": left, "top": top, "width": width, "height": height})
+        img = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
     return img
 
 
-def test_ocr(image_path=None):
-    """Test OCR recognition."""
-    print("\n=== 测试 OCR ===\n")
+def main():
+    print("=" * 50)
+    print("OCR测试")
+    print("=" * 50)
 
-    try:
-        from cnocr import CnOcr
-        ocr = CnOcr()
-        print("✓ OCR 引擎初始化成功\n")
+    win = find_wechat()
+    if not win:
+        print("未找到微信")
+        return
 
-        if image_path:
-            img = Image.open(image_path)
-        elif image_path is None:
-            # Use captured screenshot
-            try:
-                img = Image.open("test_screenshot.png")
-            except FileNotFoundError:
-                print("✗ 没有找到截图文件，请先运行屏幕截图测试")
-                return None
+    print(f"窗口: {win['width']}x{win['height']} ({win['left']},{win['top']})")
 
-        # Do OCR
-        results = ocr.ocr(img)
+    ocr = CnOcr()
+    img = capture_bottom(win)
 
-        print("识别结果:")
-        for i, line in enumerate(results):
-            if line and "text" in line:
-                print(f"  {i+1}. {line['text']}")
+    print("识别中...")
+    results = ocr.ocr(img)
 
-        if not results:
-            print("  (无识别结果)")
+    # 过滤
+    import re
+    time_pat = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+    ui_kw = ["发送", "图片", "表情", "文件", "视频", "语音", "名片", "位置"]
 
-        return results
+    texts = []
+    for r in results:
+        if not r or "text" not in r:
+            continue
+        t = r["text"]
+        if t in ui_kw or time_pat.match(t) or len(t) < 2:
+            continue
+        texts.append(t)
 
-    except Exception as e:
-        print(f"✗ OCR 测试失败: {e}")
-        return None
-
-
-def test_ocr_on_region():
-    """Test OCR on a specific region."""
-    print("\n=== 测试区域 OCR ===\n")
-    print("请在微信中打开一个聊天窗口，确保有文字消息")
-    print("然后按Enter继续...\n")
-
-    input("按Enter继续: ")
-
-    with mss.mss() as sct:
-        # Let user define region
-        print("截图已保存到 test_ocr_region.png")
-        # Capture center portion for demo
-        monitors = sct.monitors[1]
-        region = {
-            "left": monitors["width"] // 4,
-            "top": monitors["height"] // 4,
-            "width": monitors["width"] // 2,
-            "height": monitors["height"] // 2,
-        }
-        screenshot = sct.grab(region)
-        img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
-        img.save("test_ocr_region.png")
-        print(f"区域: {region}")
-
-    # Test OCR
-    try:
-        from cnocr import CnOcr
-        ocr = CnOcr()
-        results = ocr.ocr(img)
-
-        print("\n识别结果:")
-        for i, line in enumerate(results[:10]):  # Show first 10
-            if line and "text" in line:
-                print(f"  {line['text']}")
-
-        return results
-    except Exception as e:
-        print(f"✗ OCR 失败: {e}")
-        return None
+    print()
+    print(f"结果 ({len(texts)}条):")
+    for i, t in enumerate(texts):
+        print(f"  {i+1}. {t}")
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--capture", action="store_true", help="仅截图")
-    parser.add_argument("--region", action="store_true", help="区域OCR测试")
-    args = parser.parse_args()
-
-    if args.capture:
-        test_screen_capture()
-    elif args.region:
-        test_ocr_on_region()
-    else:
-        # Full test
-        test_screen_capture()
-        test_ocr()
-        print("\n提示: 用 --region 测试指定区域 OCR")
+    main()
