@@ -1,0 +1,41 @@
+# 微信自动回复配置
+
+# 硅基流动 API 配置
+api:
+  key: "sk-260840b14d4c408e923098186aa76db9"
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com/v1"
+  temperature: 0.7
+  max_tokens: 500
+
+# 时间间隔配置
+interval:
+  check: 3       # 消息检测间隔(秒)
+  reply_min: 2    # 回复最小间隔(秒)
+  reply_max: 5    # 回复最大间隔(秒)
+
+# 安全策略配置
+safety:
+  max_daily: 200       # 每日最大回复数
+  night_mode_start: 23  # 夜间模式开始时间(小时)
+  night_mode_end: 8    # 夜间模式结束时间(小时)
+  input_delay_min: 0.05 # 每次按键最小延迟(秒)
+  input_delay_max: 0.15   # 每次按键最大延迟(秒)
+
+# 关键词自动回复配置
+keywords:
+  enabled: true
+  replies:
+    "你好": "您好，请问有什么可以帮您？"
+    "在线": "您好，我在线的，请说"
+    "电话": "请问您的联系方式是？"
+  ai_fallback: true  # 未匹配时使用AI回复
+
+# AI对话配置
+ai:
+  system_prompt: "你是一个热情的客服，请用简短友好的语气回复用户的问题。"
+  context_window: 5  # 对话上下文保留条数
+
+# 微信窗口配置
+wechat:
+  title_keyword: "微信"  # 窗口标题关键词

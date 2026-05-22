@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git clone *)",
+      "Bash(pip install *)",
+      "Bash(python *)",
+      "Bash(pip list *)",
+      "Bash(pip show *)",
+      "WebSearch",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  },
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true,
+    "github@claude-plugins-official": true
+  }
+}
