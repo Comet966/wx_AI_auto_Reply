@@ -129,7 +129,7 @@ class WindowFinder:
                 title = win32gui.GetWindowText(hwnd)
                 if title == "微信":
                     rect = win32gui.GetWindowRect(hwnd)
-                    if rect[0] > 0:  # 有效位置
+                    if rect[0] >= 0:  # 有效位置（非负）
                         windows.append({
                             "left": rect[0],
                             "top": rect[1],
