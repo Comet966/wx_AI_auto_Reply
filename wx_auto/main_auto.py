@@ -1,114 +1,157 @@
-"""微信自动回复 - 精确窗口定位版本"""
-import os
-import sys
+"""微信自动回复 - 整合版"""
 import pathlib
 import time
 import random
-import win32gui
-import win32con
 
+# 项目根目录
 project_root = pathlib.Path(__file__).parent.parent
+
+import sys
 sys.path.insert(0, str(project_root))
 
-from cnocr import CnOcr
-import pyperclip
-import pyautogui as pag
+import win32gui
 import mss
 import yaml
+import requests
+import pyperclip
+import pyautogui as pag
+from cnocr import CnOcr
 
 
+# ========== 配置模块 ==========
 class Config:
-    def __init__(self):
-        config_path = project_root / "config.yaml"
+    """配置管理"""
+    def __init__(self, config_path=None):
+        if config_path is None:
+            config_path = project_root / "config.yaml"
+
         with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
+
         self.api_key = data["api"]["key"]
         self.model = data["api"]["model"]
         self.base_url = data["api"]["base_url"]
+        self.temperature = data["api"].get("temperature", 0.7)
+        self.max_tokens = data["api"].get("max_tokens", 500)
         self.system_prompt = data["ai"].get("system_prompt", "")
+        self.context_window = data["ai"].get("context_window", 5)
+
+        self.check_interval = data["interval"].get("check", 3)
+        self.reply_min = data["interval"].get("reply_min", 2)
+        self.reply_max = data["interval"].get("reply_max", 5)
+
         self.max_daily = data["safety"].get("max_daily", 200)
+        self.night_start = data["safety"].get("night_mode_start", 23)
+        self.night_end = data["safety"].get("night_mode_end", 8)
 
 
-def find_wechat_window():
-    """找到微信窗口"""
-    windows = []
-
-    def callback(hwnd, extra):
-        if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
-            if title == "微信":  # 精确匹配
-                rect = win32gui.GetWindowRect(hwnd)
-                if rect[0] > 0:  # 只取有效位置的窗口
-                    windows.append({
-                        "hwnd": hwnd,
-                        "title": title,
-                        "left": rect[0],
-                        "top": rect[1],
-                        "right": rect[2],
-                        "bottom": rect[3],
-                        "width": rect[2] - rect[0],
-                        "height": rect[3] - rect[1]
-                    })
-        return True
-
-    win32gui.EnumWindows(callback, None)
-    return windows[0] if windows else None
-
-
+# ========== API模块 ==========
 class APIClient:
+    """DeepSeek API 客户端"""
     def __init__(self, config):
-        import requests
         self.config = config
         self.session = requests.Session()
         self.session.headers = {
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json"
         }
-        self.history = []
+        self.history = []  # 对话历史
 
     def chat(self, messages):
+        """发送聊天请求"""
         url = f"{self.config.base_url}/chat/completions"
-        payload = {"model": self.config.model, "messages": messages}
+        payload = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens
+        }
         resp = self.session.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
     def chat_with_context(self, user_message):
+        """带上下文的聊天"""
         messages = []
+
+        # system prompt
         if self.config.system_prompt:
             messages.append({"role": "system", "content": self.config.system_prompt})
-        messages.extend(self.history[-10:])
+
+        # 历史记录
+        ctx = self.history[-self.config.context_window * 2:]
+        messages.extend(ctx)
+
+        # 当前消息
         messages.append({"role": "user", "content": user_message})
+
+        # API调用
         response = self.chat(messages)
+
+        # 保存历史
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": response})
+
         return response
 
+    def clear_history(self):
+        """清空历史"""
+        self.history = []
 
-class WeChatBot:
+
+# ========== OCR模块 ==========
+class OCRReader:
+    """OCR文字识别"""
     def __init__(self):
-        self.config = Config()
-        self.client = APIClient(self.config)
+        print("[OCR] 初始化...")
         self.ocr = CnOcr()
-        self.reply_count = 0
-        self.last_texts = []
-        self.daily_count = 0
+        print("[OCR] 就绪")
+
+    def recognize(self, img):
+        """识别图片中的文字"""
+        results = self.ocr.ocr(img)
+        texts = [line["text"] for line in results if line and "text" in line]
+        return texts
+
+
+# ========== 窗口模块 ==========
+class WindowFinder:
+    """微信窗口定位"""
+    def __init__(self):
         self.window = None
 
-    def find_window(self):
+    def find(self):
         """查找微信窗口"""
-        self.window = find_wechat_window()
-        if self.window:
-            print(f"✓ 找到微信窗口: ({self.window['left']}, {self.window['top']}) {self.window['width']}x{self.window['height']}")
+        windows = []
+
+        def callback(hwnd, extra):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if title == "微信":
+                    rect = win32gui.GetWindowRect(hwnd)
+                    if rect[0] > 0:  # 有效位置
+                        windows.append({
+                            "left": rect[0],
+                            "top": rect[1],
+                            "right": rect[2],
+                            "bottom": rect[3],
+                            "width": rect[2] - rect[0],
+                            "height": rect[3] - rect[1]
+                        })
             return True
-        print("❌ 未找到微信窗口")
+
+        win32gui.EnumWindows(callback, None)
+
+        if windows:
+            self.window = windows[0]
+            return True
         return False
 
-    def capture_right_half(self):
-        """截取微信窗口右半边（去掉联系人列表）"""
+    def capture_chat_area(self):
+        """截取聊天区域（右半边，去掉联系人列表）"""
         if not self.window:
-            return None, None
+            return None
 
-        # 微信窗口左边的1/4是联系人列表，右边3/4是聊天区域
         left = self.window["left"] + self.window["width"] // 4
         top = self.window["top"]
         width = self.window["width"] * 3 // 4
@@ -121,123 +164,142 @@ class WeChatBot:
             from PIL import Image
             img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
 
-        return img, region
+        return img
 
-    def recognize(self, img):
-        results = self.ocr.ocr(img)
-        texts = [line["text"] for line in results if line and "text" in line]
-        return texts
 
-    def generate_reply(self, messages):
-        content = "\n".join(messages[-5:])
-        return self.client.chat_with_context(content)
+# ========== 输入模块 ==========
+class InputSender:
+    """键盘输入发送"""
+    def __init__(self):
+        self.reply_count = 0
 
-    def send_reply(self, text):
-        """发送回复 - 带防封随机延迟"""
-        time.sleep(random.uniform(1, 3))
+    def send(self, text, delay_range=(1, 3)):
+        """发送文本 - 带随机延迟防封"""
+        # 随机延迟
+        delay = random.uniform(*delay_range)
+        time.sleep(delay)
 
+        # 保存剪贴板
         original = pyperclip.paste()
-        pyperclip.copy(text)
-        time.sleep(0.1)
 
+        # 复制内容
+        pyperclip.copy(text)
+        time.sleep(0.2)
+
+        # 粘贴
         pag.hotkey("ctrl", "v")
-        time.sleep(random.uniform(0.2, 0.5))
+        time.sleep(0.3)
+
+        # 发送
         pag.press("enter")
         time.sleep(0.2)
+
+        # 恢复剪贴板
         pyperclip.copy(original)
 
         self.reply_count += 1
-        self.daily_count += 1
+        return True
 
 
-def test():
-    """测试：截取微信窗口右半边识别"""
-    print("=" * 50)
-    print("测试：截取微信窗口右半边识别")
-    print("=" * 50)
-    print()
+# ========== 主程序 ==========
+class WeChatBot:
+    """微信自动回复机器人"""
+    def __init__(self):
+        self.config = Config()
+        self.client = APIClient(self.config)
+        self.reader = OCRReader()
+        self.finder = WindowFinder()
+        self.sender = InputSender()
 
-    bot = WeChatBot()
-    if not bot.find_window():
-        return
+        self.last_texts = []
+        self.running = False
 
-    print()
-    img, region = bot.capture_right_half()
-    if not img:
-        print("❌ 无法截取")
-        return
+    def start(self):
+        """启动"""
+        print("=" * 50)
+        print("微信自动回复助手")
+        print("=" * 50)
 
-    print(f"区域: ({region['left']}, {region['top']}) {region['width']}x{region['height']}")
-    print(f"尺寸: {img.size}")
-    print()
-    print("识别中...")
+        # 找窗口
+        if not self.finder.find():
+            print("❌ 未找到微信窗口")
+            return False
 
-    texts = bot.recognize(img)
+        w = self.finder.window
+        print(f"✓ 找到微信窗口: {w['width']}x{w['height']} ({w['left']}, {w['top']})")
 
-    print()
-    print("=" * 40)
-    print(f"识别结果 ({len(texts)} 行):")
-    print("=" * 40)
-    for i, t in enumerate(texts[:25]):
-        print(f"{i+1}. {t}")
+        self.running = True
+        print("\n开始监控... 按 Ctrl+C 停止\n")
+        return True
 
+    def run_once(self):
+        """运行一次检测"""
+        if not self.running:
+            return
 
-def run():
-    """运行自动回复"""
-    print("=" * 50)
-    print("微信自动回复 - 自动模式")
-    print("=" * 50)
-    print()
+        # 截图
+        img = self.finder.capture_chat_area()
+        if not img:
+            return
 
-    bot = WeChatBot()
-    if not bot.find_window():
-        return
+        # OCR识别
+        texts = self.reader.recognize(img)
 
-    print()
-    print("=" * 50)
-    print("开始监控... 按 Ctrl+C 停止")
-    print("=" * 50)
+        # 检测新消息
+        if texts and texts != self.last_texts:
+            new_msgs = texts[-5:] if len(texts) >= 5 else texts
 
-    while True:
-        try:
-            img, region = bot.capture_right_half()
-            if not img:
-                time.sleep(1)
-                continue
+            print(f"\n[{time.strftime('%H:%M:%S')}] === 新消息 ===")
+            for t in new_msgs:
+                print(f"  {t}")
 
-            texts = bot.recognize(img)
+            # 生成回复
+            content = "\n".join(texts[-5:])
+            reply = self.client.chat_with_context(content)
 
-            if texts and texts != bot.last_texts:
-                new_msgs = texts[-5:] if len(texts) >= 5 else texts
-                print(f"\n[{time.strftime('%H:%M:%S')}] 新消息:")
-                for t in new_msgs:
-                    print(f"  - {t}")
+            print(f"[AI] {reply}")
 
-                reply = bot.generate_reply(texts)
-                print(f"[AI] {reply}")
+            # 询问
+            send = input("\n发送回复? (y/n): ").strip().lower()
+            if send == "y":
+                self.sender.send(reply)
+                print("✓ 已发送")
 
-                send = input("\n发送回复? (y/n): ").strip().lower()
-                if send == "y":
-                    bot.send_reply(reply)
-                    print("✓ 已发送")
+            self.last_texts = texts
 
-                bot.last_texts = texts
-
-            time.sleep(3)
-
-        except KeyboardInterrupt:
-            break
-
-    print(f"\n总回复数: {bot.reply_count}")
+    def stop(self):
+        """停止"""
+        self.running = False
+        print(f"\n总回复数: {self.sender.reply_count}")
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", nargs="?", choices=["run", "test"])
+    parser.add_argument("--continuous", action="store_true", help="持续监控模式（不询问，每个新消息自动回复）")
     args = parser.parse_args()
 
+    # 创建机器人
+    bot = WeChatBot()
+    if not bot.start():
+        return
+
     if args.mode == "test":
-        test()
-    else:
-        run()
+        # 单次测试
+        bot.run_once()
+        return
+
+    # 运行
+    try:
+        while bot.running:
+            bot.run_once()
+            time.sleep(bot.config.check_interval)
+    except KeyboardInterrupt:
+        pass
+
+    bot.stop()
+
+
+if __name__ == "__main__":
+    main()
