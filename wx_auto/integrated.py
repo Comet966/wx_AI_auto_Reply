@@ -144,12 +144,22 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["select", "run"])
+    parser.add_argument("--auto", action="store_true", help="自动循环模式")
+    parser.add_argument("--interval", type=int, default=3, help="检测间隔(秒)")
     args = parser.parse_args()
 
     if args.action == "select":
         select_region()
     else:
-        recognize_and_reply()
+        if args.auto:
+            # 自动循环
+            print("=== 自动循环模式 ===\n")
+            while True:
+                recognize_and_reply()
+                print(f"\n等待 {args.interval} 秒...\n")
+                time.sleep(args.interval)
+        else:
+            recognize_and_reply()
 
 
 if __name__ == "__main__":
