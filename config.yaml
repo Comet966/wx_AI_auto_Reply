@@ -2,7 +2,7 @@
 
 # 硅基流动 API 配置
 api:
-  key: "your-api-key"
+  key: "sk-260840b14d4c408e923098186aa76db9"
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
   temperature: 0.7
